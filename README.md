@@ -1,7 +1,7 @@
 # Airbnb Booking Predictions
 
 
-This project aims at **predicting travel destinations for Airbnb’s first-time users**, with the ultimate goal of tailoring advertising strategies to different users. 
+This project aims at **predicting travel destinations for Airbnb’s first-time users**, with the ultimate goal of tailoring advertising strategies to different users. This project was completed as part of an MIT class. The project was open-ended, we were tasked with using any methods on any problem of our choice.
 
 Due to highly unbalanced data, the **analysis was split into three steps** 
 
