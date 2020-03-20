@@ -3,6 +3,8 @@
 
 This project aims at **predicting travel destinations for Airbnb’s first-time users**, with the ultimate goal of tailoring advertising strategies to different users. This project was completed as part of an MIT class. The project was open-ended, we were tasked with using any methods on any problem of our choice.
 
+The dataset for this project is publicly available here: https://www.kaggle.com/c/airbnb-recruiting-new-user-bookings/data
+
 Due to highly unbalanced data, the **analysis was split into three steps** 
 
 - whether the user booked a trip or not from their account 
