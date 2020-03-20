@@ -1,0 +1,189 @@
+---
+title: "Booking predictions"
+author: "The best team"
+date: "30/11/2019"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+library(dplyr)
+library(randomForest)
+library(gbm)
+library(caret)
+library(ROCR)
+library(e1071)
+```
+
+## Preprocessing
+
+
+```{r }
+# Read and pre-porocess the datasets
+users_train <- read.csv("full_train.csv")
+users_test <- read.csv("full_test.csv")
+
+users_train$signup_flow = factor(users_train$signup_flow)
+users_test$signup_flow = factor(users_test$signup_flow)
+
+users_train$booking = factor(users_train$booking)
+users_test$booking = factor(users_test$booking)
+
+users_train_trip <- users_train %>% select(-c("id","date_first_booking", "country_destination"))
+users_test_trip  = users_test %>% select(-c("id","date_first_booking", "country_destination"))
+users_train_trip <- na.omit(users_train_trip)
+users_test_trip <- na.omit(users_test_trip)
+
+#this is needed to equalize the levels between training and testing sets so we can do predictions
+levels(users_test_trip$gender) <- levels(users_train_trip$gender)
+levels(users_test_trip$signup_method) <- levels(users_train_trip$signup_method)
+levels(users_test_trip$signup_flow) <- levels(users_train_trip$signup_flow)
+levels(users_test_trip$language) <- levels(users_train_trip$language)
+levels(users_test_trip$affiliate_channel) <- levels(users_train_trip$affiliate_channel)
+levels(users_test_trip$affiliate_provider) <- levels(users_train_trip$affiliate_provider)
+levels(users_test_trip$first_affiliate_tracked) <- levels(users_train_trip$first_affiliate_tracked)
+levels(users_test_trip$signup_app) <- levels(users_train_trip$signup_app)
+levels(users_test_trip$first_device_type) <- levels(users_train_trip$first_device_type)
+levels(users_test_trip$first_browser) <- levels(users_train_trip$first_browser)
+levels(users_test_trip$age_generation) <- levels(users_train_trip$age_generation)
+levels(users_test_trip$age_quantil) <- levels(users_train_trip$age_quantil)
+levels(users_test_trip$millenials) <- levels(users_train_trip$millenials)
+levels(users_test_trip$device_type_colapsed) <- levels(users_train_trip$device_type_colapsed)
+
+get_stats <- function (predictions, true_data) {
+  matrix = table(true_data, predictions) 
+  accuracy = (matrix[1,1]+matrix[2,2])/length(true_data)
+  TPR = (matrix[2,2])/sum(matrix[2,])
+  FPR = (matrix[1,2])/sum(matrix[1,])
+  return(c(accuracy, TPR, FPR))
+}
+
+get_auc <- function(predicted_probabilities, true_data) {
+  rocr.pred.rf <- prediction(predicted_probabilities, true_data)
+  performance(rocr.pred.rf, "auc")@y.values[[1]]
+}
+```
+
+
+```{r}
+library(ggplot2)
+ggplot(data=users_train) +
+  geom_histogram(aes(x=age,fill=(booking==1)),position='fill', bins = 15) +
+  theme_bw() +
+  xlab('Age') +
+  ylab('Frequency') +
+  scale_fill_manual (name='', labels=c('No Booking','Booking'), values=c('grey60','blue'))
+```
+
+
+## Random Forest
+
+```{r}
+# control <- trainControl(method="repeatedcv", number=5, repeats=1, search="random")
+# 
+# train.rf.oob <- train(booking ~ .,
+#                       data = users_train_trip,
+#                       method="rf",
+#                       tuneGrid=data.frame(mtry=1:sqrt(ncol(users_train_trip))),
+#                       nodesize = 25, 
+#                       ntree = 100,
+#                       trControl=control)
+
+# mtry_chosen <- train.rf.oob$bestTune[[1]]   
+### mtry_chosen after cv = 4
+mtry_chosen <- 4
+
+model_RF = randomForest(booking ~ . , 
+                                  data = users_train_trip, 
+                                  ntree = 500, 
+                                  mtry = mtry_chosen, 
+                                  nodesize = 25,
+                                  na.action=na.exclude)
+importance.rf <- data.frame(imp=importance(model_RF))
+importance.rf
+```
+
+
+
+Prediction and evaluation
+
+```{r}
+#predicting binary outcomes directly
+pred_RF = predict(model_RF, newdata = users_test_trip)
+```
+
+```{r}
+#confusion matrix
+table(pred_RF, users_test_trip$booking)
+```
+
+```{r}
+get_stats(pred_RF, users_test_trip$booking)
+#to get AUC, we need to predict probabilities instead
+get_auc(predict(model_RF, newdata = users_test_trip, type = "prob")[, 2], users_test_trip$booking)
+```
+
+
+### Boosting
+
+```{r}
+#simplest model
+model_GBM_1 = gbm(booking ~ .,
+                  data=users_train_trip, distribution = "multinomial",
+                  n.minobsinnode = 50, n.trees = 100, shrinkage = 0.001, interaction.depth = 3)
+influence = summary(model_GBM_1)
+```
+
+
+```{r}
+#a bit more complex: more and deeper trees, but faster learning rate
+model_GBM_2 = gbm(booking ~ .,
+                  data=users_train_trip, distribution = "multinomial",
+                  n.minobsinnode = 25, n.trees = 500, shrinkage = 0.01, interaction.depth = 7)
+influence = summary(model_GBM_2)
+```
+
+
+
+```{r}
+#the most complex model: small learning rate, lots of deep trees 
+model_GBM_3 = gbm(booking ~ .,
+                  data=users_train_trip, distribution = "multinomial",
+                  n.minobsinnode = 25, n.trees = 1000, shrinkage = 0.001, interaction.depth = 10)
+influence = summary(model_GBM_3)
+```
+
+Prediction and evaluation
+
+
+```{r}
+pred_GBM_1_prob <-  predict(model_GBM_1, newdata = users_test_trip, n.trees = 100, type = "response")
+pred_GBM_1 <- as.numeric(pred_GBM_1_prob[, 2, 1] <= pred_GBM_1_prob[, 1, 1])
+
+
+pred_GBM_2_prob <-  predict(model_GBM_2, newdata = users_test_trip, n.trees = 500, type = "response")
+pred_GBM_2 <- as.numeric(pred_GBM_2_prob[, 2, 1] <= pred_GBM_2_prob[, 1, 1])
+
+
+pred_GBM_3_prob <-  predict(model_GBM_3, newdata = users_test_trip, n.trees = 1000, type = "response")
+pred_GBM_3 <- as.numeric(pred_GBM_3_prob[, 2, 1] <= pred_GBM_3_prob[, 1, 1])
+```
+
+```{r}
+get_stats(pred_GBM_1, users_test_trip$booking)
+get_auc(pred_GBM_1_prob[, 2, ], users_test_trip$booking)
+
+get_stats(pred_GBM_2, users_test_trip$booking)
+get_auc(pred_GBM_2_prob[, 2, ], users_test_trip$booking)
+
+get_stats(pred_GBM_3, users_test_trip$booking)
+get_auc(pred_GBM_3_prob[, 2, ], users_test_trip$booking)
+```
+
+
+
+
+
